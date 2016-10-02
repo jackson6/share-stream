@@ -28,8 +28,7 @@ var io = require('socket.io').listen(server);
 var Transcoder = require('stream-transcoder');
 var omdb = require('omdb');
 var re = /(?:\.([^.]+))?$/;
-var fanarttvAPI = require('fanarttv');
-var fanarttv = new fanarttvAPI('0a5795ff869ce0778ef12548cbbce981');
+var fanarttv = '0a5795ff869ce0778ef12548cbbce981';
 
 app.set('superSecret', config.secret); // secret variable
 // get our request parameters
@@ -116,19 +115,16 @@ function updateMovieList(page, callback){
 
 function getFanart(id, callback){
 	console.log('get');
-	fanarttv.getImagesForMovie(id, function(err,res) {
-		if(res){
-			if(res.moviebackground){
-				callback(res.moviebackground[0].url);
-			}
-			else if(res.movieposter){
-				callback(res.movieposter[0].url);
-			}else{
-				callback('undefined');
-			}
+	request('http://webservice.fanart.tv/v3/movies/'+id+'?api_key='+fanarttv, function (error, response, body) {
+	  if (!error && response.statusCode == 200) {
+		var json = JSON.parse(body);
+		if(json.status != "error"){
+			callback(json.moviebackground[0]);
 		}else{
 			callback('undefined');
 		}
+		
+	  }
 	});
 }
 
@@ -302,6 +298,12 @@ apiRoutes.use(function(req, res, next) {
 io.on('connection', function(socket){
 	console.log('a user connected');
 	
+	socket.on('test', function(data){
+		console.log('id = '+data.id);
+		getFanart(data.id, function(test){
+			console.log(test);
+		});
+	});
 	socket.on('peer-connected', function(data){
 		console.log('new peer connected');
 		peers.push(data.id);

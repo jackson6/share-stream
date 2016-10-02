@@ -20,12 +20,16 @@ var eztv = require('eztvapi')();
 var request = require("request");
 var jsonfile = require('jsonfile');
 var file = './tmp/data.json';
+var file1 = './tmp/movies.json';
+var file2 = './tmp/movies1.json';
 var schedule = require('node-schedule');
 var server = require('http').createServer(app);
 var io = require('socket.io').listen(server);
 var Transcoder = require('stream-transcoder');
 var omdb = require('omdb');
 var re = /(?:\.([^.]+))?$/;
+var fanarttvAPI = require('fanarttv');
+var fanarttv = new fanarttvAPI('0a5795ff869ce0778ef12548cbbce981');
 
 app.set('superSecret', config.secret); // secret variable
 // get our request parameters
@@ -98,6 +102,69 @@ function prettyBytes(num) {
   num = Number((num / Math.pow(1000, exponent)).toFixed(2))
   unit = units[exponent]
   return (neg ? '-' : '') + num + ' ' + unit
+}
+
+function updateMovieList(page, callback){
+	console.log('function ' + page);
+	request('https://yts.ag/api/v2/list_movies.json?limit=50&page='+page, function (error, response, body) {
+	  if (!error && response.statusCode == 200) {
+		var json = JSON.parse(body);
+		callback(json.data.movies);
+	  }
+	});
+}
+
+function getFanart(id, callback){
+	console.log('get');
+	fanarttv.getImagesForMovie(id, function(err,res) {
+		if(res){
+			if(res.moviebackground){
+				callback(res.moviebackground[0].url);
+			}
+			else if(res.movieposter){
+				callback(res.movieposter[0].url);
+			}else{
+				callback('undefined');
+			}
+		}else{
+			callback('undefined');
+		}
+	});
+}
+
+var j = schedule.scheduleJob('0 0 * * * *', function(){
+	updateMovieFile();
+});
+
+function updateMovieFile(){
+	jsonfile.readFile(file1, function (err, obj) {
+		var updated
+		updateMovieList(1, function(list){
+			var newList = [];
+			forEachAsync(list, function(next, element, index, array){
+				if(element===obj[0]){
+					updated = true;
+					console.log('updated');
+				}else{
+					getFanart(element.imdb_code, function(fanart){
+						element.fanart = fanart;
+						newList.push(element);
+					});
+				}
+				next();
+			}).then(function () {
+				if(updated && newList){
+					console.log('All requests have finished');
+					newList = newList.concat(obj);
+					jsonfile.writeFile(file1, newList, function (err) {
+						console.error(err);
+					})
+				}else{
+					console.log('upToDate');
+				}
+			});
+		});
+	});
 }
 
 function getShows(){
@@ -439,7 +506,6 @@ io.on('connection', function(socket){
 			}
 		}
 	});
-	
 	socket.on('updateWatching', function(data){
 		Watch.findOneAndUpdate({user_id: data.watching.user_id, movie_id: data.watching.movie_id}, {$set:{current: data.watching.current}}, {new: true}, function(err, doc){
 			if(err){
@@ -464,6 +530,56 @@ io.on('connection', function(socket){
 				}else{
 					console.log('Successfully updated item.');
 				}
+			}
+		});
+	});
+	socket.on('updateMovies', function(data){
+		var pages = [];
+		var movies = [];
+		for (var i = 1; i <= Math.ceil(5751/50); i++) {
+			pages.push(i);
+		}
+		console.log(pages.length);
+		forEachAsync(pages, function(next, element, index, array){
+			updateMovieList(element, function(json){
+				movies = movies.concat(json);
+				console.log('function two ' + element);
+				next();
+			});
+		}).then(function () {
+			console.log('All requests have finished');
+			jsonfile.writeFile(file1, movies, function (err) {
+				console.error(err);
+			})
+		});
+	});
+	socket.on('getMovieFanart', function(data){
+		var movies = [];
+		jsonfile.readFile(file1, function (err, obj) {
+			if(err){
+				console.log(err);
+			}else{
+				forEachAsync(obj, function(next, element, index, array){
+					getFanart(element.imdb_code, function(json){
+						element.fanart = json;
+						movies.push(element);
+						next();
+					});
+				}).then(function () {
+					console.log('All requests have finished');
+					jsonfile.writeFile(file2, movies, function (err) {
+						console.error(err);
+					})
+				});
+			}
+		});
+	});
+	socket.on('getMovies', function(data){
+		jsonfile.readFile(file2, function (err, obj) {
+			if(err){
+				socket.emit('movieResult', { success: true, msg: err });
+			}else{
+				socket.emit('movieResult', { success: true, movies: obj });
 			}
 		});
 	});
@@ -516,22 +632,9 @@ io.on('connection', function(socket){
 		var torrent = buildMagnetURI(data.infoHash);
 		var torrent = client.get(torrent);
         var file = getLargestFile(torrent);
-		//var readStream = file.createReadStream();
-		console.log("cast-video emitted");
-		var proc = ffmpeg(infs)
-		  .videoCodec('vp8')
-		  .audioCodec('libmp3lame')
-		  .format('webm')
-		  // setup event handlers
-		  .on('end', function() {
-			console.log('done processing input stream');
-		  })
-		  .on('error', function(err) {
-			console.log('an error happened: ' + err.message);
-		  })
-		 proc.addListener('data', function(data) {
-			 console.log('sending data');
-			socket.emit('watch', data);
+		var readStream = file.createReadStream();
+		readStream.addListener('data', function(data) {
+			socket.emit('streamStatus', data);
 		});
 	});
 });

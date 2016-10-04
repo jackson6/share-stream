@@ -7,7 +7,7 @@
   "dependencies": {
     "bcrypt-nodejs": "0.0.3",
     "body-parser": "1.15.2",
-    "express": "^4.13.4",
+    "express": "4.13.4",
     "express-ws": "2.0.0",
     "jsonwebtoken": "7.0.1",
     "jwt-simple": "0.5.0",
